@@ -1,0 +1,389 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local localPlayer = Players.LocalPlayer
+
+-- 二重起動防止
+local existingGui = CoreGui:FindFirstChild("UnderTP_ExecutorGui")
+if existingGui then
+    existingGui:Destroy()
+end
+
+-- 1. GUIの動的生成
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "UnderTP_ExecutorGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = CoreGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 220, 0, 455)
+mainFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 30)
+titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Text = "Under TP (自動フレンド判定対応)"
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.TextSize = 14
+titleLabel.Parent = mainFrame
+
+local stopButton = Instance.new("TextButton")
+stopButton.Size = UDim2.new(1, -10, 0, 30)
+stopButton.Position = UDim2.new(0, 5, 0, 35)
+stopButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+stopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopButton.Text = "追跡解除 (STOP)"
+stopButton.Font = Enum.Font.SourceSansBold
+stopButton.TextSize = 15
+stopButton.Parent = mainFrame
+
+-- 距離調整バー
+local distFrame = Instance.new("Frame")
+distFrame.Size = UDim2.new(1, -10, 0, 30)
+distFrame.Position = UDim2.new(0, 5, 0, 70)
+distFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+distFrame.BorderSizePixel = 0
+distFrame.Parent = mainFrame
+
+local closerBtn = Instance.new("TextButton")
+closerBtn.Size = UDim2.new(0.32, 0, 1, 0)
+closerBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 180)
+closerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closerBtn.Text = "近づく (+)"
+closerBtn.Font = Enum.Font.SourceSansBold
+closerBtn.TextSize = 13
+closerBtn.Parent = distFrame
+
+local distLabel = Instance.new("TextLabel")
+distLabel.Size = UDim2.new(0.36, 0, 1, 0)
+distLabel.Position = UDim2.new(0.32, 0, 0, 0)
+distLabel.BackgroundTransparency = 1
+distLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+distLabel.Text = "高さ: -4.5"
+distLabel.Font = Enum.Font.SourceSansBold
+distLabel.TextSize = 13
+distLabel.Parent = distFrame
+
+local fartherBtn = Instance.new("TextButton")
+fartherBtn.Size = UDim2.new(0.32, 0, 1, 0)
+fartherBtn.Position = UDim2.new(0.68, 0, 0, 0)
+fartherBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 180)
+fartherBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+fartherBtn.Text = "遠くへ (-)"
+fartherBtn.Font = Enum.Font.SourceSansBold
+fartherBtn.TextSize = 13
+fartherBtn.Parent = distFrame
+
+-- 上下向き切り替えボタン
+local lookToggleBtn = Instance.new("TextButton")
+lookToggleBtn.Size = UDim2.new(1, -10, 0, 30)
+lookToggleBtn.Position = UDim2.new(0, 5, 0, 105)
+lookToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 90, 140)
+lookToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+lookToggleBtn.Text = "向き: 下向き (見下ろし)"
+lookToggleBtn.Font = Enum.Font.SourceSansBold
+lookToggleBtn.TextSize = 13
+lookToggleBtn.Parent = mainFrame
+
+-- 体力低下時の退避機能 ON/OFFボタン
+local rescueToggleBtn = Instance.new("TextButton")
+rescueToggleBtn.Size = UDim2.new(1, -10, 0, 30)
+rescueToggleBtn.Position = UDim2.new(0, 5, 0, 140)
+rescueToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 90)
+rescueToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+rescueToggleBtn.Text = "低HP退避機能: ON"
+rescueToggleBtn.Font = Enum.Font.SourceSansBold
+rescueToggleBtn.TextSize = 13
+rescueToggleBtn.Parent = mainFrame
+
+-- 名前検索ボックス
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, -10, 0, 30)
+searchBox.Position = UDim2.new(0, 5, 0, 175)
+searchBox.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
+searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+searchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+searchBox.PlaceholderText = "🔍 プレイヤー名で検索..."
+searchBox.Text = ""
+searchBox.Font = Enum.Font.SourceSans
+searchBox.TextSize = 14
+searchBox.ClearTextOnFocus = false
+searchBox.Parent = mainFrame
+
+local playerList = Instance.new("ScrollingFrame")
+playerList.Size = UDim2.new(1, -10, 1, -215)
+playerList.Position = UDim2.new(0, 5, 0, 210)
+playerList.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+playerList.BorderSizePixel = 0
+playerList.ScrollBarThickness = 6
+playerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+playerList.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 4)
+listLayout.Parent = playerList
+
+-- 2. 設定・状態変数
+local targetUserId = nil
+local renderConnection = nil
+local offsetY = -4.5
+local STEP = 0.5
+local lookAngleX = -90
+
+local RETREAT_HP_RATIO = 0.30
+local RETURN_HP_RATIO = 0.90
+local HIGH_SKY_OFFSET_Y = 1000
+
+local isRetreating = false
+local isRescueEnabled = true
+
+local function updateDistLabel()
+    distLabel.Text = string.format("高さ: %.1f", offsetY)
+end
+
+closerBtn.MouseButton1Click:Connect(function()
+    offsetY = offsetY + STEP
+    updateDistLabel()
+end)
+
+fartherBtn.MouseButton1Click:Connect(function()
+    offsetY = offsetY - STEP
+    updateDistLabel()
+end)
+
+lookToggleBtn.MouseButton1Click:Connect(function()
+    if lookAngleX == -90 then
+        lookAngleX = 90
+        lookToggleBtn.Text = "向き: 上向き (見上げ)"
+        lookToggleBtn.BackgroundColor3 = Color3.fromRGB(110, 80, 150)
+    else
+        lookAngleX = -90
+        lookToggleBtn.Text = "向き: 下向き (見下ろし)"
+        lookToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 90, 140)
+    end
+end)
+
+rescueToggleBtn.MouseButton1Click:Connect(function()
+    isRescueEnabled = not isRescueEnabled
+    if isRescueEnabled then
+        rescueToggleBtn.Text = "低HP退避機能: ON"
+        rescueToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 90)
+    else
+        rescueToggleBtn.Text = "低HP退避機能: OFF"
+        rescueToggleBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+        isRetreating = false
+    end
+end)
+
+local function stopFollowing()
+    targetUserId = nil
+    isRetreating = false
+    titleLabel.Text = "Under TP (自動フレンド判定対応)"
+    titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+
+    if renderConnection then
+        renderConnection:Disconnect()
+        renderConnection = nil
+    end
+
+    local char = localPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        local pos = hrp.Position
+        local _, yRot, _ = hrp.CFrame:ToOrientation()
+        hrp.CFrame = CFrame.new(pos) * CFrame.Angles(0, yRot, 0)
+    end
+end
+
+local function startFollowing(targetPlayer)
+    stopFollowing()
+    targetUserId = targetPlayer.UserId
+
+    renderConnection = RunService.Heartbeat:Connect(function()
+        if not targetUserId then return end
+
+        local target = Players:GetPlayerByUserId(targetUserId)
+
+        if not target then
+            stopFollowing()
+            return
+        end
+
+        local myChar = localPlayer.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
+
+        local targetChar = target.Character
+        local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+
+        if not myHRP or not targetHRP then
+            return
+        end
+
+        local currentOffsetY = offsetY
+
+        if isRescueEnabled then
+            local hpRatio = 1
+            if myHumanoid and myHumanoid.MaxHealth > 0 then
+                hpRatio = myHumanoid.Health / myHumanoid.MaxHealth
+            end
+
+            if hpRatio <= 0 then
+                isRetreating = false
+            elseif not isRetreating and hpRatio <= RETREAT_HP_RATIO then
+                isRetreating = true
+            elseif isRetreating and hpRatio >= RETURN_HP_RATIO then
+                isRetreating = false
+            end
+
+            if isRetreating then
+                currentOffsetY = HIGH_SKY_OFFSET_Y
+                local hpPercent = math.floor(hpRatio * 100)
+                titleLabel.Text = string.format("【退避中 HP:%d%%】90%%待機", hpPercent)
+                titleLabel.BackgroundColor3 = Color3.fromRGB(180, 90, 20)
+            else
+                titleLabel.Text = "追跡中: " .. target.DisplayName
+                titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+            end
+        else
+            titleLabel.Text = "追跡中: " .. target.DisplayName
+            titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+        end
+
+        myHRP.CFrame = targetHRP.CFrame
+            * CFrame.new(0, currentOffsetY, 0)
+            * CFrame.Angles(math.rad(lookAngleX), 0, 0)
+
+        myHRP.AssemblyLinearVelocity = Vector3.zero
+    end)
+end
+
+-- 3. プレイヤー一覧の更新（Roblox公式のフレンド判定を利用）
+local function updatePlayerList()
+    for _, child in ipairs(playerList:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+
+    local myChar = localPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+    local searchText = string.lower(searchBox.Text)
+    local isSearching = (searchText ~= "")
+
+    local playersList = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer then
+            local displayName = string.lower(player.DisplayName)
+            local name = string.lower(player.Name)
+            
+            if not isSearching or string.find(displayName, searchText) or string.find(name, searchText) then
+                table.insert(playersList, player)
+            end
+        end
+    end
+
+    -- ソート処理
+    table.sort(playersList, function(a, b)
+        -- pcallを使って安全にフレンド判定を行う
+        local successA, isAFriend = pcall(function()
+            return localPlayer:IsFriendsWith(a.UserId)
+        end)
+        local successB, isBFriend = pcall(function()
+            return localPlayer:IsFriendsWith(b.UserId)
+        end)
+
+        isAFriend = successA and isAFriend
+        isBFriend = successB and isBFriend
+
+        -- 片方がフレンドで片方が非フレンドの場合、フレンドを常に下（後ろ）にする
+        if isAFriend ~= isBFriend then
+            return not isAFriend
+        end
+
+        -- 両方同じステータスのとき
+        if isSearching then
+            return a.Name < b.Name
+        else
+            local charA = a.Character
+            local hrpA = charA and charA:FindFirstChild("HumanoidRootPart")
+            local charB = b.Character
+            local hrpB = charB and charB:FindFirstChild("HumanoidRootPart")
+
+            local distA = hrpA and myHRP and (myHRP.Position - hrpA.Position).Magnitude or math.huge
+            local distB = hrpB and myHRP and (myHRP.Position - hrpB.Position).Magnitude or math.huge
+
+            return distA < distB
+        end
+    end)
+
+    for _, player in ipairs(playersList) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -6, 0, 32)
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        
+        local distText = ""
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if myHRP and hrp then
+            local distance = math.floor((myHRP.Position - hrp.Position).Magnitude)
+            distText = string.format(" (%dm)", distance)
+        end
+
+        -- 自動取得したフレンド情報をもとにタグをつける
+        local success, isFriend = pcall(function()
+            return localPlayer:IsFriendsWith(player.UserId)
+        end)
+        local friendTag = (success and isFriend) and " [フレンド]" or ""
+
+        btn.Text = player.DisplayName .. distText .. friendTag .. " (@" .. player.Name .. ")"
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 14
+
+        if player.UserId == targetUserId then
+            btn.BackgroundColor3 = Color3.fromRGB(50, 140, 80)
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+        end
+
+        btn.Parent = playerList
+
+        btn.MouseButton1Click:Connect(function()
+            startFollowing(player)
+            updatePlayerList()
+        end)
+    end
+end
+
+searchBox:GetPropertyChangedSignal("Text"):Connect(updatePlayerList)
+
+stopButton.MouseButton1Click:Connect(stopFollowing)
+
+Players.PlayerAdded:Connect(updatePlayerList)
+
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    if leavingPlayer.UserId == targetUserId then
+        stopFollowing()
+    end
+
+    updatePlayerList()
+end)
+
+task.spawn(function()
+    while screenGui.Parent do
+        updatePlayerList()
+        task.wait(1)
+    end
+end)
