@@ -1,0 +1,286 @@
+-- Services
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+
+-- セーブファイルの設定（ゲームごとに分けて保存したい場合は PlaceId を含めるのがおすすめです）
+local FolderName = "TeleportSaves"
+local FileName = FolderName .. "/SavedLocations_" .. tostring(game.PlaceId) .. ".json"
+
+-- ファイル保存機能のチェックと初期化
+local hasFileSystem = (writefile ~= nil and readfile ~= nil and isfile ~= nil)
+if hasFileSystem and makefolder ~= nil and isfolder ~= nil then
+    if not isfolder(FolderName) then
+        makefolder(FolderName)
+    end
+end
+
+-- 保存データの管理テーブル
+local SavedLocations = {}
+
+-- データのセーブ関数
+local function SaveData()
+    if not hasFileSystem then return end
+    local success, encoded = pcall(function()
+        return HttpService:JSONEncode(SavedLocations)
+    end)
+    if success then
+        writefile(FileName, encoded)
+    end
+end
+
+-- データのロード関数
+local function LoadData()
+    if not hasFileSystem or not isfile(FileName) then return end
+    local success, decoded = pcall(function()
+        return HttpService:JSONDecode(readfile(FileName))
+    end)
+    if success and type(decoded) == "table" then
+        SavedLocations = decoded
+    end
+end
+
+-- 既存の同名GUIがあれば削除（二重起動防止）
+local GuiName = "PersistentTeleportGUI"
+local TargetParent = (gethui and gethui()) or CoreGui
+if TargetParent:FindFirstChild(GuiName) then
+    TargetParent[GuiName]:Destroy()
+end
+
+-- GUIの作成
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GuiName
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = TargetParent
+
+-- メインフレーム
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 260, 0, 340)
+MainFrame.Position = UDim2.new(0.5, -130, 0.5, -170)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true -- ドラッグ移動を有効化
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 8)
+MainCorner.Parent = MainFrame
+
+-- タイトルバー
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 32)
+TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = TitleBar
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -60, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "TP Manager (Auto-Save)"
+TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleText.TextSize = 14
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+-- 最小化ボタン
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+MinimizeBtn.Position = UDim2.new(1, -54, 0, 4)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+MinimizeBtn.Parent = TitleBar
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 4)
+
+-- 閉じるボタン
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 24, 0, 24)
+CloseBtn.Position = UDim2.new(1, -28, 0, 4)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 12
+CloseBtn.Parent = TitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 4)
+
+-- コンテンツコンテナ（最小化時に隠す部分）
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -32)
+ContentFrame.Position = UDim2.new(0, 0, 0, 32)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- 場所の名前入力ボックス
+local NameInput = Instance.new("TextBox")
+NameInput.Size = UDim2.new(1, -20, 0, 30)
+NameInput.Position = UDim2.new(0, 10, 0, 10)
+NameInput.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+NameInput.PlaceholderText = "場所の名前を入力..."
+NameInput.Text = ""
+NameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+NameInput.PlaceholderColor3 = Color3.fromRGB(160, 160, 170)
+NameInput.Font = Enum.Font.Gotham
+NameInput.TextSize = 13
+NameInput.ClearTextOnFocus = false
+NameInput.Parent = ContentFrame
+Instance.new("UICorner", NameInput).CornerRadius = UDim.new(0, 6)
+
+-- 現在地を追加するボタン
+local AddBtn = Instance.new("TextButton")
+AddBtn.Size = UDim2.new(1, -20, 0, 30)
+AddBtn.Position = UDim2.new(0, 10, 0, 46)
+AddBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 90)
+AddBtn.Text = "+ 現在の座標を追加"
+AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AddBtn.Font = Enum.Font.GothamBold
+AddBtn.TextSize = 13
+AddBtn.Parent = ContentFrame
+Instance.new("UICorner", AddBtn).CornerRadius = UDim.new(0, 6)
+
+-- スクロールリスト
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, -20, 1, -96)
+ScrollFrame.Position = UDim2.new(0, 10, 0, 86)
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 4
+ScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScrollFrame.Parent = ContentFrame
+Instance.new("UICorner", ScrollFrame).CornerRadius = UDim.new(0, 6)
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 5)
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = ScrollFrame
+
+local UIPadding = Instance.new("UIPadding")
+UIPadding.PaddingTop = UDim.new(0, 5)
+UIPadding.PaddingBottom = UDim.new(0, 5)
+UIPadding.PaddingLeft = UDim.new(0, 5)
+UIPadding.PaddingRight = UDim.new(0, 5)
+UIPadding.Parent = ScrollFrame
+
+-- リストのUIを更新・再描画する関数
+local function RefreshList()
+    -- 既存のアイテムをクリア
+    for _, child in ipairs(ScrollFrame:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+
+    -- 保存データからボタンを生成
+    for index, locData in ipairs(SavedLocations) do
+        local ItemFrame = Instance.new("Frame")
+        ItemFrame.Size = UDim2.new(1, 0, 0, 32)
+        ItemFrame.BackgroundColor3 = Color3.fromRGB(38, 38, 45)
+        ItemFrame.Parent = ScrollFrame
+        Instance.new("UICorner", ItemFrame).CornerRadius = UDim.new(0, 5)
+
+        -- テレポート実行ボタン
+        local TpBtn = Instance.new("TextButton")
+        TpBtn.Size = UDim2.new(1, -36, 1, 0)
+        TpBtn.Position = UDim2.new(0, 0, 0, 0)
+        TpBtn.BackgroundTransparency = 1
+        TpBtn.Text = "  " .. locData.name
+        TpBtn.TextColor3 = Color3.fromRGB(230, 230, 240)
+        TpBtn.Font = Enum.Font.GothamSemibold
+        TpBtn.TextSize = 13
+        TpBtn.TextXAlignment = Enum.TextXAlignment.Left
+        TpBtn.TextTruncate = Enum.TextTruncate.AtEnd
+        TpBtn.Parent = ItemFrame
+
+        TpBtn.MouseButton1Click:Connect(function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                -- 保存された座標へテレポート
+                hrp.CFrame = CFrame.new(locData.x, locData.y, locData.z)
+            end
+        end)
+
+        -- 削除ボタン
+        local DelBtn = Instance.new("TextButton")
+        DelBtn.Size = UDim2.new(0, 26, 0, 26)
+        DelBtn.Position = UDim2.new(1, -29, 0, 3)
+        DelBtn.BackgroundColor3 = Color3.fromRGB(180, 55, 55)
+        DelBtn.Text = "削除"
+        DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        DelBtn.Font = Enum.Font.GothamBold
+        DelBtn.TextSize = 10
+        DelBtn.Parent = ItemFrame
+        Instance.new("UICorner", DelBtn).CornerRadius = UDim.new(0, 4)
+
+        DelBtn.MouseButton1Click:Connect(function()
+            table.remove(SavedLocations, index)
+            SaveData()
+            RefreshList()
+        end)
+    end
+end
+
+-- 追加ボタンの処理
+AddBtn.MouseButton1Click:Connect(function()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local locName = NameInput.Text
+    if locName == "" or locName:match("^%s*$") then
+        locName = "場所 #" .. (#SavedLocations + 1)
+    end
+
+    local pos = hrp.Position
+    table.insert(SavedLocations, {
+        name = locName,
+        x = pos.X,
+        y = pos.Y,
+        z = pos.Z
+    })
+
+    NameInput.Text = ""
+    SaveData()
+    RefreshList()
+end)
+
+-- 最小化処理
+local isMinimized = false
+MinimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    ContentFrame.Visible = not isMinimized
+    if isMinimized then
+        MainFrame.Size = UDim2.new(0, 260, 0, 32)
+        MinimizeBtn.Text = "+"
+    else
+        MainFrame.Size = UDim2.new(0, 260, 0, 340)
+        MinimizeBtn.Text = "-"
+    end
+end)
+
+-- 閉じる処理
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+-- 起動時にデータを読み込んでリストを表示
+LoadData()
+RefreshList()
+
+-- ファイルシステム非対応のエグゼキューター向け警告
+if not hasFileSystem then
+    TitleText.Text = "TP Manager (セーブ非対応)"
+    TitleText.TextColor3 = Color3.fromRGB(255, 180, 50)
+end
