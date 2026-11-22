@@ -1,0 +1,331 @@
+-- StarterPlayer -> StarterPlayerScripts に LocalScript として配置
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- ==========================================
+-- 設定パラメータ
+-- ==========================================
+local targetPlayer: Player? = nil
+local isEnabled = false
+local isBindingKey = false
+
+-- 初期の解除キー（GUIから変更可能）
+local unlockKey: Enum.KeyCode = Enum.KeyCode.X
+
+-- 追従の強さ: 1.0 で完全固定、0.85〜0.95 で超高速追従
+local LOCK_STRENGTH = 1.0
+
+-- 狙う部位 ("Head" または "HumanoidRootPart")
+local AIM_PART = "Head"
+
+-- キャラクターの体ごと相手の方に向けるか
+local ROTATE_CHARACTER = true
+
+-- ==========================================
+-- 1. GUIの作成（ScreenGui + ドラッグ対応パネル）
+-- ==========================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PlayerLockGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 140, 0, 36)
+toggleButton.Position = UDim2.new(1, -155, 0, 15)
+toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.TextSize = 14
+toggleButton.Text = "ターゲット選択 ▼"
+toggleButton.Parent = screenGui
+
+local uiCornerBtn = Instance.new("UICorner")
+uiCornerBtn.CornerRadius = UDim.new(0, 8)
+uiCornerBtn.Parent = toggleButton
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 285)
+mainFrame.Position = UDim2.new(1, -235, 0, 58)
+mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+mainFrame.BorderSizePixel = 0
+mainFrame.Visible = true
+mainFrame.Parent = screenGui
+
+local uiCornerFrame = Instance.new("UICorner")
+uiCornerFrame.CornerRadius = UDim.new(0, 10)
+uiCornerFrame.Parent = mainFrame
+
+-- ドラッグ用ヘッダーバー
+local dragHeader = Instance.new("TextLabel")
+dragHeader.Size = UDim2.new(1, 0, 0, 24)
+dragHeader.Position = UDim2.new(0, 0, 0, 0)
+dragHeader.BackgroundColor3 = Color3.fromRGB(34, 34, 42)
+dragHeader.BorderSizePixel = 0
+dragHeader.TextColor3 = Color3.fromRGB(180, 185, 200)
+dragHeader.Font = Enum.Font.GothamBold
+dragHeader.TextSize = 11
+dragHeader.Text = "  ⋮⋮ ドラッグして移動"
+dragHeader.TextXAlignment = Enum.TextXAlignment.Left
+dragHeader.Parent = mainFrame
+
+local uiCornerHeader = Instance.new("UICorner")
+uiCornerHeader.CornerRadius = UDim.new(0, 10)
+uiCornerHeader.Parent = dragHeader
+
+-- 現在のロック状態ラベル
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -16, 0, 24)
+statusLabel.Position = UDim2.new(0, 8, 0, 28)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+statusLabel.Font = Enum.Font.GothamSemibold
+statusLabel.TextSize = 13
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Text = "ロック中: なし"
+statusLabel.Parent = mainFrame
+
+-- 解除ボタン
+local clearButton = Instance.new("TextButton")
+clearButton.Size = UDim2.new(0.58, -10, 0, 28)
+clearButton.Position = UDim2.new(0, 8, 0, 56)
+clearButton.BackgroundColor3 = Color3.fromRGB(170, 50, 50)
+clearButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+clearButton.Font = Enum.Font.GothamBold
+clearButton.TextSize = 12
+clearButton.Parent = mainFrame
+
+local uiCornerClear = Instance.new("UICorner")
+uiCornerClear.CornerRadius = UDim.new(0, 6)
+uiCornerClear.Parent = clearButton
+
+-- キー設定ボタン
+local bindButton = Instance.new("TextButton")
+bindButton.Size = UDim2.new(0.42, -2, 0, 28)
+bindButton.Position = UDim2.new(0.58, 2, 0, 56)
+bindButton.BackgroundColor3 = Color3.fromRGB(60, 65, 85)
+bindButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+bindButton.Font = Enum.Font.GothamBold
+bindButton.TextSize = 12
+bindButton.Parent = mainFrame
+
+local uiCornerBind = Instance.new("UICorner")
+uiCornerBind.CornerRadius = UDim.new(0, 6)
+uiCornerBind.Parent = bindButton
+
+-- スクロールリスト
+local scrollingFrame = Instance.new("ScrollingFrame")
+scrollingFrame.Size = UDim2.new(1, -16, 1, -96)
+scrollingFrame.Position = UDim2.new(0, 8, 0, 90)
+scrollingFrame.BackgroundTransparency = 1
+scrollingFrame.ScrollBarThickness = 4
+scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollingFrame.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 5)
+listLayout.SortOrder = Enum.SortOrder.Name
+listLayout.Parent = scrollingFrame
+
+-- ==========================================
+-- 2. GUIドラッグ処理（マウス・タッチ対応）
+-- ==========================================
+do
+	local dragging = false
+	local dragInput: InputObject? = nil
+	local dragStart: Vector3 = Vector3.zero
+	local startPos: UDim2 = mainFrame.Position
+
+	local function updateDrag(input: InputObject)
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+
+	dragHeader.InputBegan:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = mainFrame.Position
+
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+
+	dragHeader.InputChanged:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input: InputObject)
+		if dragging and input == dragInput then
+			updateDrag(input)
+		end
+	end)
+end
+
+-- ==========================================
+-- 3. プレイヤー一覧・解除・キー設定ロジック
+-- ==========================================
+local function refreshKeyButtons()
+	clearButton.Text = string.format("解除 [%s]", unlockKey.Name)
+	if isBindingKey then
+		bindButton.Text = "キー押下..."
+		bindButton.BackgroundColor3 = Color3.fromRGB(210, 140, 30)
+	else
+		bindButton.Text = "キー変更"
+		bindButton.BackgroundColor3 = Color3.fromRGB(60, 65, 85)
+	end
+end
+
+local function updateStatusText()
+	if isEnabled and targetPlayer then
+		statusLabel.Text = "ロック中: " .. targetPlayer.DisplayName
+	else
+		statusLabel.Text = "ロック中: なし"
+	end
+end
+
+local function refreshPlayerList()
+	for _, child in ipairs(scrollingFrame:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= localPlayer then
+			local btn = Instance.new("TextButton")
+			btn.Name = plr.Name
+			btn.Size = UDim2.new(1, -4, 0, 32)
+			btn.BackgroundColor3 = (targetPlayer == plr and isEnabled)
+				and Color3.fromRGB(45, 115, 200)
+				or Color3.fromRGB(40, 40, 48)
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 13
+			btn.Text = string.format("%s (@%s)", plr.DisplayName, plr.Name)
+			btn.Parent = scrollingFrame
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0, 6)
+			corner.Parent = btn
+
+			btn.MouseButton1Click:Connect(function()
+				targetPlayer = plr
+				isEnabled = true
+				updateStatusText()
+				refreshPlayerList()
+			end)
+		end
+	end
+end
+
+local function unlockTarget()
+	if not isEnabled and not targetPlayer then
+		return
+	end
+	isEnabled = false
+	targetPlayer = nil
+	updateStatusText()
+	refreshPlayerList()
+end
+
+toggleButton.MouseButton1Click:Connect(function()
+	mainFrame.Visible = not mainFrame.Visible
+	toggleButton.Text = mainFrame.Visible and "ターゲット選択 ▼" or "ターゲット選択 ▶"
+end)
+
+clearButton.MouseButton1Click:Connect(unlockTarget)
+
+bindButton.MouseButton1Click:Connect(function()
+	isBindingKey = not isBindingKey
+	refreshKeyButtons()
+end)
+
+UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+	-- キー設定待機中の処理
+	if isBindingKey then
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			if input.KeyCode ~= Enum.KeyCode.Escape and input.KeyCode ~= Enum.KeyCode.Unknown then
+				unlockKey = input.KeyCode
+			end
+			isBindingKey = false
+			refreshKeyButtons()
+		end
+		return
+	end
+
+	if gameProcessed then
+		return
+	end
+
+	if input.KeyCode == unlockKey then
+		unlockTarget()
+	end
+end)
+
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(removingPlayer)
+	if targetPlayer == removingPlayer then
+		unlockTarget()
+	end
+	task.defer(refreshPlayerList)
+end)
+
+refreshKeyButtons()
+refreshPlayerList()
+
+-- ==========================================
+-- 4. 強力なカメラ＆キャラクター追従
+-- ==========================================
+RunService:BindToRenderStep("StrongPlayerLock", Enum.RenderPriority.Camera.Value + 1, function()
+	if not isEnabled or not targetPlayer then
+		return
+	end
+
+	local targetChar = targetPlayer.Character
+	if not targetChar then
+		return
+	end
+
+	local targetPart = targetChar:FindFirstChild(AIM_PART)
+		or targetChar:FindFirstChild("HumanoidRootPart")
+		or targetChar.PrimaryPart
+
+	if not targetPart or not targetPart:IsA("BasePart") then
+		return
+	end
+
+	local targetPos = targetPart.Position
+	local camPos = camera.CFrame.Position
+	local desiredCamCFrame = CFrame.lookAt(camPos, targetPos)
+
+	if LOCK_STRENGTH >= 1.0 then
+		camera.CFrame = desiredCamCFrame
+	else
+		camera.CFrame = camera.CFrame:Lerp(desiredCamCFrame, LOCK_STRENGTH)
+	end
+
+	if ROTATE_CHARACTER then
+		local myChar = localPlayer.Character
+		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+		if myRoot and myRoot:IsA("BasePart") then
+			local flatTarget = Vector3.new(targetPos.X, myRoot.Position.Y, targetPos.Z)
+			myRoot.CFrame = CFrame.lookAt(myRoot.Position, flatTarget)
+		end
+	end
+end)
