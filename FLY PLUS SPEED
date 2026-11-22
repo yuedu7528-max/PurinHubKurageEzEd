@@ -22,7 +22,7 @@ local MAX_SPEED = 500
 local DEFAULT_WALK_SPEED = 16
 local SPEED_CHECK_INTERVAL = 0.2 -- 0.2秒ごとにWalkSpeedをチェック
 
-local FULL_SIZE = UDim2.new(0, 268, 0, 366)
+local FULL_SIZE = UDim2.new(0, 268, 0, 404)
 local MINI_SIZE = UDim2.new(0, 175, 0, 34)
 
 local flySpeed = 50
@@ -31,6 +31,7 @@ local flying = false
 local speedEnabled = true
 local noclipEnabled = false
 local infJumpEnabled = false
+local airWalkEnabled = false
 local minimized = false
 
 local ascendHeld = false
@@ -44,6 +45,8 @@ local bodyVelocity
 local bodyGyro
 local flyConnection
 local noclipConnection
+local airWalkConnection
+local airWalkPlatform
 local jumpRequestConn
 local inputBeganConn
 local speedWatchThread
@@ -568,6 +571,79 @@ createSpeedControl(248, "JUMP POWER", JUMP_POWER, function(val)
 	JUMP_POWER = val
 end)
 
+-- AirWalk ON/OFF ボタン
+local airWalkToggleBtn = Instance.new("TextButton")
+airWalkToggleBtn.Name = "AirWalkToggle"
+airWalkToggleBtn.Size = UDim2.new(1, -20, 0, 30)
+airWalkToggleBtn.Position = UDim2.new(0, 10, 0, 332)
+airWalkToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+airWalkToggleBtn.Text = "AirWalk: OFF"
+airWalkToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+airWalkToggleBtn.Font = Enum.Font.GothamBold
+airWalkToggleBtn.TextSize = 12
+airWalkToggleBtn.BorderSizePixel = 0
+airWalkToggleBtn.Parent = bodyGroup
+Instance.new("UICorner", airWalkToggleBtn).CornerRadius = UDim.new(0, 6)
+
+-- 足場を作成してプレイヤーの足元に追従させる
+local function setAirWalk(state)
+	airWalkEnabled = state
+
+	if airWalkConnection then
+		airWalkConnection:Disconnect()
+		airWalkConnection = nil
+	end
+
+	if airWalkPlatform then
+		airWalkPlatform:Destroy()
+		airWalkPlatform = nil
+	end
+
+	if airWalkEnabled then
+		airWalkToggleBtn.Text = "AirWalk: ON"
+		airWalkToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 175, 105)
+
+		local character = player.Character
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not hrp or not humanoid then
+			airWalkEnabled = false
+			airWalkToggleBtn.Text = "AirWalk: OFF"
+			airWalkToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+			return
+		end
+
+		-- ONにした瞬間の高さを保存する（ジャンプしても足場は上昇しない）
+		local fixedPlatformY = hrp.Position.Y - humanoid.HipHeight - (hrp.Size.Y / 2) - 0.5
+
+		airWalkPlatform = Instance.new("Part")
+		airWalkPlatform.Name = "AirWalkPlatform"
+		airWalkPlatform.Size = Vector3.new(8, 1, 8)
+		airWalkPlatform.Anchored = true
+		airWalkPlatform.Transparency = 1
+		airWalkPlatform.CanCollide = true
+		airWalkPlatform.CanTouch = false
+		airWalkPlatform.CanQuery = false
+		airWalkPlatform.CFrame = CFrame.new(hrp.Position.X, fixedPlatformY, hrp.Position.Z)
+		airWalkPlatform.Parent = workspace
+
+		-- 横方向だけプレイヤーを追いかけ、高さはONにした位置で固定
+		airWalkConnection = RunService.Heartbeat:Connect(function()
+			if not airWalkEnabled or not airWalkPlatform or not airWalkPlatform.Parent then return end
+
+			local currentCharacter = player.Character
+			local currentHrp = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+			local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+			if not currentHrp or not currentHumanoid or currentHumanoid.Health <= 0 then return end
+
+			airWalkPlatform.CFrame = CFrame.new(currentHrp.Position.X, fixedPlatformY, currentHrp.Position.Z)
+		end)
+	else
+		airWalkToggleBtn.Text = "AirWalk: OFF"
+		airWalkToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+	end
+end
+
 -- 飛行開始処理（PC＋スマホ対応）
 local function startFlying()
 	stopFlying(flyToggleBtn)
@@ -685,6 +761,10 @@ trackConn(infJumpToggleBtn.MouseButton1Click:Connect(function()
 		infJumpToggleBtn.Text = "InfJump: OFF"
 		infJumpToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
 	end
+end))
+
+trackConn(airWalkToggleBtn.MouseButton1Click:Connect(function()
+	setAirWalk(not airWalkEnabled)
 end))
 
 -- 折りたたみ／再展開トグル
