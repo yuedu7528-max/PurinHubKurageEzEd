@@ -1,0 +1,438 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local player = Players.LocalPlayer
+
+-- 二重起動防止
+local parentGui do
+	local ok, res = pcall(function()
+		return gethui and gethui() or CoreGui
+	end)
+	parentGui = (ok and res) or player:WaitForChild("PlayerGui")
+end
+
+local oldGui = parentGui:FindFirstChild("ExecutorFlyGui")
+if oldGui then
+	oldGui:Destroy()
+end
+
+-- 設定値（0〜500）
+local MIN_SPEED = 0
+local MAX_SPEED = 500
+local DEFAULT_WALK_SPEED = 16
+
+local FULL_SIZE = UDim2.new(0, 260, 0, 246)
+local MINI_SIZE = UDim2.new(0, 175, 0, 34)
+
+local flySpeed = 50
+local walkSpeed = 16
+local flying = false
+local speedEnabled = true
+local minimized = false
+
+local bodyVelocity
+local bodyGyro
+local flyConnection
+local connections = {}
+
+local function trackConn(conn)
+	table.insert(connections, conn)
+	return conn
+end
+
+-- 現在のWalkSpeed状態（ONなら設定値、OFFなら16）を適用
+local function applyWalkSpeed()
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = speedEnabled and walkSpeed or DEFAULT_WALK_SPEED
+	end
+end
+
+-- 飛行停止処理
+local function stopFlying(toggleBtnRef)
+	flying = false
+	if toggleBtnRef then
+		toggleBtnRef.Text = "Fly: OFF"
+		toggleBtnRef.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+	end
+
+	if flyConnection then
+		flyConnection:Disconnect()
+		flyConnection = nil
+	end
+	if bodyVelocity then
+		bodyVelocity:Destroy()
+		bodyVelocity = nil
+	end
+	if bodyGyro then
+		bodyGyro:Destroy()
+		bodyGyro = nil
+	end
+
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.PlatformStand = false
+			applyWalkSpeed()
+		end
+	end
+end
+
+-- GUI作成
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ExecutorFlyGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = parentGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = FULL_SIZE
+mainFrame.Position = UDim2.new(0, 20, 0.5, -123)
+mainFrame.BackgroundColor3 = Color3.fromRGB(26, 28, 36)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+
+-- ヘッダー＆折りたたみボタン
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -44, 0, 26)
+titleLabel.Position = UDim2.new(0, 10, 0, 4)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "FLY & SPEED (0-500)"
+titleLabel.TextColor3 = Color3.fromRGB(235, 240, 250)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 12
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainFrame
+
+local miniBtn = Instance.new("TextButton")
+miniBtn.Name = "MinimizeButton"
+miniBtn.Size = UDim2.new(0, 24, 0, 24)
+miniBtn.Position = UDim2.new(1, -32, 0, 5)
+miniBtn.BackgroundColor3 = Color3.fromRGB(50, 55, 70)
+miniBtn.Text = "-"
+miniBtn.TextColor3 = Color3.fromRGB(235, 240, 250)
+miniBtn.Font = Enum.Font.GothamBold
+miniBtn.TextSize = 15
+miniBtn.BorderSizePixel = 0
+miniBtn.Parent = mainFrame
+Instance.new("UICorner", miniBtn).CornerRadius = UDim.new(0, 6)
+
+-- 折りたたみ時に隠す操作エリア
+local bodyGroup = Instance.new("Frame")
+bodyGroup.Name = "BodyGroup"
+bodyGroup.Size = UDim2.new(1, 0, 1, -32)
+bodyGroup.Position = UDim2.new(0, 0, 0, 32)
+bodyGroup.BackgroundTransparency = 1
+bodyGroup.BorderSizePixel = 0
+bodyGroup.Parent = mainFrame
+
+-- ON/OFF ボタン行（Fly / WalkSpeed）
+local flyToggleBtn = Instance.new("TextButton")
+flyToggleBtn.Name = "FlyToggle"
+flyToggleBtn.Size = UDim2.new(0.5, -13, 0, 32)
+flyToggleBtn.Position = UDim2.new(0, 10, 0, 4)
+flyToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+flyToggleBtn.Text = "Fly: OFF"
+flyToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+flyToggleBtn.Font = Enum.Font.GothamBold
+flyToggleBtn.TextSize = 12
+flyToggleBtn.BorderSizePixel = 0
+flyToggleBtn.Parent = bodyGroup
+Instance.new("UICorner", flyToggleBtn).CornerRadius = UDim.new(0, 6)
+
+local speedToggleBtn = Instance.new("TextButton")
+speedToggleBtn.Name = "SpeedToggle"
+speedToggleBtn.Size = UDim2.new(0.5, -13, 0, 32)
+speedToggleBtn.Position = UDim2.new(0.5, 3, 0, 4)
+speedToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 175, 105)
+speedToggleBtn.Text = "Speed: ON"
+speedToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+speedToggleBtn.Font = Enum.Font.GothamBold
+speedToggleBtn.TextSize = 12
+speedToggleBtn.BorderSizePixel = 0
+speedToggleBtn.Parent = bodyGroup
+Instance.new("UICorner", speedToggleBtn).CornerRadius = UDim.new(0, 6)
+
+-- 共通コントロール作成関数（ラベル＋入力欄＋「-」「+」ボタン＋ドラッグ＆ホイール対応スライダー）
+local function createSpeedControl(yPos, titleText, initialValue, onChanged)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -20, 0, 78)
+	container.Position = UDim2.new(0, 10, 0, yPos)
+	container.BackgroundColor3 = Color3.fromRGB(36, 39, 50)
+	container.BorderSizePixel = 0
+	container.Parent = bodyGroup
+	Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.52, 0, 0, 24)
+	label.Position = UDim2.new(0, 8, 0, 4)
+	label.BackgroundTransparency = 1
+	label.Text = titleText
+	label.TextColor3 = Color3.fromRGB(210, 216, 230)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 11
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = container
+
+	local minusBtn = Instance.new("TextButton")
+	minusBtn.Size = UDim2.new(0, 24, 0, 24)
+	minusBtn.Position = UDim2.new(1, -86, 0, 4)
+	minusBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 76)
+	minusBtn.Text = "-"
+	minusBtn.TextColor3 = Color3.new(1, 1, 1)
+	minusBtn.Font = Enum.Font.GothamBold
+	minusBtn.TextSize = 14
+	minusBtn.BorderSizePixel = 0
+	minusBtn.Parent = container
+	Instance.new("UICorner", minusBtn).CornerRadius = UDim.new(0, 5)
+
+	local inputBox = Instance.new("TextBox")
+	inputBox.Size = UDim2.new(0, 46, 0, 24)
+	inputBox.Position = UDim2.new(1, -58, 0, 4)
+	inputBox.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
+	inputBox.Text = tostring(initialValue)
+	inputBox.TextColor3 = Color3.new(1, 1, 1)
+	inputBox.Font = Enum.Font.GothamBold
+	inputBox.TextSize = 11
+	inputBox.ClearTextOnFocus = false
+	inputBox.BorderSizePixel = 0
+	inputBox.Parent = container
+	Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 5)
+
+	local plusBtn = Instance.new("TextButton")
+	plusBtn.Size = UDim2.new(0, 24, 0, 24)
+	plusBtn.Position = UDim2.new(1, -28, 0, 4)
+	plusBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 76)
+	plusBtn.Text = "+"
+	plusBtn.TextColor3 = Color3.new(1, 1, 1)
+	plusBtn.Font = Enum.Font.GothamBold
+	plusBtn.TextSize = 14
+	plusBtn.BorderSizePixel = 0
+	plusBtn.Parent = container
+	Instance.new("UICorner", plusBtn).CornerRadius = UDim.new(0, 5)
+
+	local track = Instance.new("TextButton")
+	track.Size = UDim2.new(1, -16, 0, 22)
+	track.Position = UDim2.new(0, 8, 0, 40)
+	track.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
+	track.Text = ""
+	track.AutoButtonColor = false
+	track.BorderSizePixel = 0
+	track.Parent = container
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = Color3.fromRGB(80, 145, 255)
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local hintLabel = Instance.new("TextLabel")
+	hintLabel.Size = UDim2.new(1, -12, 1, 0)
+	hintLabel.Position = UDim2.new(0, 6, 0, 0)
+	hintLabel.BackgroundTransparency = 1
+	hintLabel.Text = "Drag or Scroll (0-500)"
+	hintLabel.TextColor3 = Color3.fromRGB(165, 175, 195)
+	hintLabel.Font = Enum.Font.Gotham
+	hintLabel.TextSize = 10
+	hintLabel.TextXAlignment = Enum.TextXAlignment.Center
+	hintLabel.Parent = track
+
+	local currentVal = math.clamp(initialValue, MIN_SPEED, MAX_SPEED)
+	local dragging = false
+
+	local function setValue(val, fromInput)
+		currentVal = math.clamp(math.floor(val + 0.5), MIN_SPEED, MAX_SPEED)
+		local ratio = (currentVal - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)
+		fill.Size = UDim2.new(ratio, 0, 1, 0)
+		if not fromInput then
+			inputBox.Text = tostring(currentVal)
+		end
+		onChanged(currentVal)
+	end
+
+	local function updateFromX(xPos)
+		local absPos = track.AbsolutePosition.X
+		local absSize = track.AbsoluteSize.X
+		if absSize <= 0 then return end
+		local ratio = math.clamp((xPos - absPos) / absSize, 0, 1)
+		setValue(MIN_SPEED + ratio * (MAX_SPEED - MIN_SPEED), false)
+	end
+
+	trackConn(track.MouseButton1Down:Connect(function(x)
+		dragging = true
+		updateFromX(x)
+	end))
+
+	trackConn(UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			updateFromX(input.Position.X)
+		end
+	end))
+
+	trackConn(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end))
+
+	trackConn(container.MouseWheelForward:Connect(function()
+		setValue(currentVal + 5, false)
+	end))
+
+	trackConn(container.MouseWheelBackward:Connect(function()
+		setValue(currentVal - 5, false)
+	end))
+
+	trackConn(minusBtn.MouseButton1Click:Connect(function()
+		local step = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 25 or 5
+		setValue(currentVal - step, false)
+	end))
+
+	trackConn(plusBtn.MouseButton1Click:Connect(function()
+		local step = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 25 or 5
+		setValue(currentVal + step, false)
+	end))
+
+	trackConn(inputBox.FocusLost:Connect(function()
+		local num = tonumber(inputBox.Text)
+		if num then
+			setValue(num, false)
+		else
+			inputBox.Text = tostring(currentVal)
+		end
+	end))
+
+	setValue(currentVal, false)
+end
+
+-- Fly Speed コントロール作成
+createSpeedControl(44, "FLY SPEED", flySpeed, function(val)
+	flySpeed = val
+end)
+
+-- WalkSpeed コントロール作成
+createSpeedControl(128, "WALK SPEED", walkSpeed, function(val)
+	walkSpeed = val
+	applyWalkSpeed()
+end)
+
+-- 飛行開始処理
+local function startFlying()
+	stopFlying(flyToggleBtn)
+
+	local character = player.Character
+	if not character then return end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not hrp or not humanoid then return end
+
+	flying = true
+	flyToggleBtn.Text = "Fly: ON"
+	flyToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 175, 105)
+	humanoid.PlatformStand = true
+
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+	bodyVelocity.Velocity = Vector3.zero
+	bodyVelocity.Parent = hrp
+
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+	bodyGyro.P = 9e4
+	bodyGyro.CFrame = hrp.CFrame
+	bodyGyro.Parent = hrp
+
+	flyConnection = RunService.RenderStepped:Connect(function()
+		if not flying or not hrp or not hrp.Parent then return end
+
+		local camCF = workspace.CurrentCamera.CFrame
+		local moveDir = Vector3.zero
+
+		if not UserInputService:GetFocusedTextBox() then
+			if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+				moveDir += camCF.LookVector
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+				moveDir -= camCF.LookVector
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+				moveDir -= camCF.RightVector
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+				moveDir += camCF.RightVector
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+				moveDir += Vector3.new(0, 1, 0)
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+				moveDir -= Vector3.new(0, 1, 0)
+			end
+		end
+
+		if moveDir.Magnitude > 0 then
+			bodyVelocity.Velocity = moveDir.Unit * flySpeed
+		else
+			bodyVelocity.Velocity = Vector3.zero
+		end
+
+		bodyGyro.CFrame = camCF
+	end)
+end
+
+-- ボタンイベント
+trackConn(flyToggleBtn.MouseButton1Click:Connect(function()
+	if flying then
+		stopFlying(flyToggleBtn)
+	else
+		startFlying()
+	end
+end))
+
+trackConn(speedToggleBtn.MouseButton1Click:Connect(function()
+	speedEnabled = not speedEnabled
+	if speedEnabled then
+		speedToggleBtn.Text = "Speed: ON"
+		speedToggleBtn.BackgroundColor3 = Color3.fromRGB(55, 175, 105)
+	else
+		speedToggleBtn.Text = "Speed: OFF"
+		speedToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+	end
+	applyWalkSpeed()
+end))
+
+-- 折りたたみ／再展開トグル（飛行・WalkSpeedはそのまま維持）
+trackConn(miniBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	bodyGroup.Visible = not minimized
+	if minimized then
+		mainFrame.Size = MINI_SIZE
+		titleLabel.Text = "FLY & SPEED"
+		miniBtn.Text = "+"
+	else
+		mainFrame.Size = FULL_SIZE
+		titleLabel.Text = "FLY & SPEED (0-500)"
+		miniBtn.Text = "-"
+	end
+end))
+
+-- リスポーン時処理
+trackConn(player.CharacterAdded:Connect(function(char)
+	stopFlying(flyToggleBtn)
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if humanoid then
+		humanoid.WalkSpeed = speedEnabled and walkSpeed or DEFAULT_WALK_SPEED
+	end
+end))
+
+applyWalkSpeed()
